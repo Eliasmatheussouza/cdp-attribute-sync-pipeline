@@ -1,0 +1,203 @@
+# -*- coding: utf-8 -*-
+"""cdc_approved_without_contract
+
+Creation and submission of CDC attributes
+"""
+
+# 1 - Import Python libraries
+
+import pandas as pd
+import requests
+import json
+from google.cloud import bigquery
+import time
+import datetime
+
+# --- CONFIGURATION ---
+TEAMS_WEBHOOK = "https://your-tenant.webhook.office.com/webhookb2/YOUR_WEBHOOK_ID/IncomingWebhook/YOUR_WEBHOOK_TOKEN"
+
+class JobMonitor:
+    def __init__(self, job_name, webhook_url):
+        self.job_name = job_name
+        self.webhook_url = webhook_url
+        self.start_time = time.time()
+
+    def send_alert(self, status, message, details=""):
+        # Define color: Green for success, Red for error
+        color = "00FF00" if status == "Sucesso" else "FF0000"
+
+        # Fixed duration calculation
+        duration_seconds = int(time.time() - self.start_time)
+        duration = str(timedelta(seconds=duration_seconds))
+
+        # String handling for Teams JSON
+        # We add code blocks (```) to make the error readable
+        safe_details = str(details).replace('"', "'").replace("\\", "/")
+        if status != "Sucesso":
+            safe_details = f"```\n{safe_details[:500]}\n```"
+
+        payload = {
+            "@type": "MessageCard",
+            "@context": "[http://schema.org/extensions](http://schema.org/extensions)",
+            "themeColor": color,
+            "summary": "Processing Monitor",
+            "sections": [{
+                "activityTitle": f"🚀 Job: {self.job_name}",
+                "activitySubtitle": f"**Status:** {status}",
+                "facts": [
+                    {"name": "⏱ Duration:", "value": duration},
+                    {"name": "📝 Message:", "value": message},
+                    {"name": "💻 Technical Info:", "value": safe_details}
+                ],
+                "markdown": True
+            }]
+        }
+
+        try:
+            r = requests.post(self.webhook_url, json=payload, timeout=15)
+            print(f"Notification sent to Teams. Status Code: {r.status_code}")
+        except Exception as e:
+            print(f"Failed to send webhook: {e}")
+
+# Instantiating the monitor
+monitor = JobMonitor("CDC ATTRIBUTE - APPROVED WITHOUT CONTRACT", TEAMS_WEBHOOK)
+
+# --- CUSTOM ERROR HANDLER ---
+def custom_exc_handler(shell, etype, evalue, tb, tb_offset=None):
+    # Formats the full error
+    erro_info = "".join(traceback.format_exception(etype, evalue, tb))
+
+    # Sends the failure alert
+    monitor.send_alert(
+        status="Job Failure",
+        message=f"Critical error: {etype.__name__}",
+        details=erro_info
+    )
+
+    # Ensures the error still appears in the Notebook console
+    shell.showtraceback((etype, evalue, tb), tb_offset=tb_offset)
+
+# Configures IPython to use our handler
+try:
+    get_ipython().set_custom_exc((Exception,), custom_exc_handler)
+    print(" Monitor configured successfully!")
+except NameError:
+    print("'get_ipython' not found. The automatic error monitor only works in Notebooks.")
+
+# 2 - Endpoint, test environment, production environment and payload limit
+
+INSIDER_API_URL     = "https://unification.useinsider.com/api/user/v1/upsert"
+
+#PARTNER_NAME       = "your_partner_name_test" # test
+#REQUEST_TOKEN      = "your_request_token_test" # test
+
+PARTNER_NAME        = "your_partner_name" # prod
+REQUEST_TOKEN       = "your_request_token" # prod
+
+API_PAYLOAD_LIMIT   = 1000
+
+# 3 - BigQuery authentication
+
+# BigQuery Customer query
+
+client = bigquery.Client()
+
+QUERY = """
+WITH cleaned AS (
+  SELECT
+    email,
+    contrato_cdc
+  FROM `your-project.your_dataset.your_table`
+  WHERE
+    DATE(updatedAtInsider) = CURRENT_DATE()
+    AND REGEXP_CONTAINS(TRIM(email), '@[a-zA-Z0-9-]+\\\\.[a-zA-Z0-9-.]+')
+    AND LENGTH(TRIM(email)) - LENGTH(REPLACE(TRIM(email), '@', '')) = 1
+    AND TRIM(email) NOT LIKE '% %'
+)
+
+SELECT *
+FROM cleaned
+"""
+
+query_job = client.query(QUERY)
+df = query_job.to_dataframe()
+
+print("Records loaded:", len(df))
+
+df
+df['contrato_cdc'].dtype
+
+# 5 - Sending the request
+
+from tqdm import tqdm
+
+headers = {
+    "X-PARTNER-NAME": PARTNER_NAME,
+    "X-REQUEST-TOKEN": REQUEST_TOKEN,
+    "Content-Type": "application/json"
+}
+
+users_data = []
+count_rows = 0
+
+if df.empty:
+    print("No records found. Exiting.")
+
+else:
+    for _, row in tqdm(df.iterrows(), total=len(df), desc="Sending batches"):
+
+        user_payload = {
+            "identifiers": {"email": row["email"]},
+            "attributes": {
+                "custom": {
+                    "cdc_contrato": row["contrato_cdc"]
+                }
+            }
+        }
+
+        users_data.append(user_payload)
+        count_rows += 1
+
+        if count_rows == API_PAYLOAD_LIMIT:
+            try:
+                response = requests.post(
+                    INSIDER_API_URL,
+                    headers=headers,
+                    json={"users": users_data}
+                )
+                try:
+                    echo_response = response.json()
+                except:
+                    echo_response = response.text
+
+            except Exception as e:
+                print("\nBATCH ERROR:")
+                print(e)
+                print(json.dumps({"users": users_data}, indent=2))
+
+            users_data = []
+            count_rows = 0
+
+    if users_data:
+        response = requests.post(
+            INSIDER_API_URL,
+            headers=headers,
+            json={"users": users_data}
+        )
+
+    if 'response' in dir():
+        try:
+            echo_response = response.json()
+        except:
+            echo_response = response.text
+
+        print("\nFinal API response:", echo_response)
+        print(f"Total sent to Insider: {len(df)}")
+
+# --- THIS IS THE LAST CELL OF THE NOTEBOOK ---
+# If the notebook reached here without errors, we send the final OK.
+
+monitor.send_alert(
+    status="Success",
+    message="The scheduled processing was completed with all steps integrated."
+)
