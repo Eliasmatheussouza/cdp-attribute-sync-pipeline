@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
-"""cdc_approved_without_contract
+"""credit_approved_without_contract
 
-Creation and submission of CDC attributes
+Creation and submission of consumer credit attributes
 """
 
 # 1 - Import Python libraries
@@ -60,7 +60,7 @@ class JobMonitor:
             print(f"Failed to send webhook: {e}")
 
 # Instantiating the monitor
-monitor = JobMonitor("CDC ATTRIBUTE - APPROVED WITHOUT CONTRACT", TEAMS_WEBHOOK)
+monitor = JobMonitor("Consumer Credit ATTRIBUTE - APPROVED WITHOUT CONTRACT", TEAMS_WEBHOOK)
 
 # --- CUSTOM ERROR HANDLER ---
 def custom_exc_handler(shell, etype, evalue, tb, tb_offset=None):
@@ -106,7 +106,7 @@ QUERY = """
 WITH cleaned AS (
   SELECT
     email,
-    contrato_cdc
+    contract_credit
   FROM `your-project.your_dataset.your_table`
   WHERE
     DATE(updatedAtInsider) = CURRENT_DATE()
@@ -125,7 +125,7 @@ df = query_job.to_dataframe()
 print("Records loaded:", len(df))
 
 df
-df['contrato_cdc'].dtype
+df['contract_credit'].dtype
 
 # 5 - Sending the request
 
@@ -150,7 +150,7 @@ else:
             "identifiers": {"email": row["email"]},
             "attributes": {
                 "custom": {
-                    "cdc_contrato": row["contrato_cdc"]
+                    "credit_contract": row["contract_credit"]
                 }
             }
         }
