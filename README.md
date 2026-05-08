@@ -1,4 +1,4 @@
-# cdp_attribute_sync_pipeline
+# cdp attribute sync pipeline
 
 Scheduled pipeline that reads approved CDC contract data from BigQuery
 and upserts user attributes to Insider's Unification API in batches.
